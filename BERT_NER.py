@@ -63,17 +63,17 @@ flags.DEFINE_integer(
 )
 
 flags.DEFINE_bool(
-    "do_train", False,
+    "do_train", True,
     "Whether to run training."
 )
 flags.DEFINE_bool("use_tpu", False, "Whether to use TPU or GPU/CPU.")
 
 flags.DEFINE_bool("do_eval", False, "Whether to run eval on the dev set.")
 
-flags.DEFINE_bool("do_predict", True,
+flags.DEFINE_bool("do_predict", False,
                   "Whether to run the model in inference mode on the test set.")
 
-flags.DEFINE_integer("train_batch_size", 8, "Total batch size for training.")
+flags.DEFINE_integer("train_batch_size", 10, "Total batch size for training.")
 
 flags.DEFINE_integer("eval_batch_size", 8, "Total batch size for eval.")
 
@@ -82,7 +82,7 @@ flags.DEFINE_integer("predict_batch_size", 8, "Total batch size for predict.")
 flags.DEFINE_float("learning_rate", 5e-5,
                    "The initial learning rate for Adam.")
 
-flags.DEFINE_float("num_train_epochs", 20.0,
+flags.DEFINE_float("num_train_epochs", 40.0,
                    "Total number of training epochs to perform.")
 
 
@@ -187,7 +187,8 @@ class DataProcessor(object):
                     words = []
                     labels = []
                     continue
-                if word != ' ':
+                # 去掉原语料中无意义的空格
+                if word != ' ' and len(word) > 0:
                     words.append(word)
                     labels.append(label)
             return lines
@@ -226,6 +227,11 @@ class NerProcessor(DataProcessor):
                 "B-Symptom", "I-Symptom", "B-Test", "I-Test",
                 "B-Test_Value", "I-Test_Value", "B-Treatment", "I-Treatment",
                 "X", "[CLS]", "[SEP]"]
+        # clinical data-ruijin/5 classes
+        # return ["O", "B-Anatomy", "I-Anatomy", "B-Disease", "I-Disease",
+        #         "B-Symptom", "I-Symptom", "B-Test", "I-Test",
+        #         "B-Treatment", "I-Treatment",
+        #         "X", "[CLS]", "[SEP]"]
 
     def _create_example(self, lines, set_type):
         examples = []
@@ -255,6 +261,7 @@ def write_tokens(tokens, label_ids, mode):
 def convert_single_example(ex_index, example, label_map, max_seq_length, tokenizer, mode):
     textlist = example.text.split(' ')
     labellist = example.label.split(' ')
+    assert len(textlist) == len(labellist)
     tokens = []
     labels = []
     for i, word in enumerate(textlist):
@@ -426,7 +433,7 @@ def create_model(bert_config, is_training, input_ids, input_mask,
     blstm_crf = BLSTM_CRF(embedded_chars=bert_layer, hidden_unit=lstm_size, cell_type=cell, num_layers=num_layers,
                           dropout_rate=dropout_rate, initializers=initializers, num_labels=num_labels,
                           seq_length=max_seq_length, labels=labels, lengths=lengths, is_training=is_training)
-    rst = blstm_crf.add_blstm_crf_layer(crf_only=True)
+    rst = blstm_crf.add_blstm_crf_layer(crf_only=False)
 
     return rst
 
@@ -665,7 +672,9 @@ def main(_):
             seq_length=FLAGS.max_seq_length,
             is_training=True,
             drop_remainder=True)
-        estimator.train(input_fn=train_input_fn, max_steps=num_train_steps)
+        # estimator.train(input_fn=train_input_fn, max_steps=num_train_steps)
+        estimator.train(input_fn=train_input_fn, steps=num_train_steps,
+                        checkpoint_path=FLAGS.output_dir+'model.ckpt-2000')
     if FLAGS.do_eval:
         eval_examples = processor.get_dev_examples(FLAGS.data_dir)
         eval_file = os.path.join(FLAGS.output_dir, "eval.tf_record")
@@ -740,9 +749,14 @@ def main(_):
         list_f3 = list(f3)
         for i, line in enumerate(list_f2):
             f2_line = line.strip()
-            f3_line = list_f3[i].strip()
-            newline = f2_line + ' ' + f3_line+'\n'
-            f1.write(newline)
+            if f2_line == '[SEP] [SEP]':
+                pass
+            elif f2_line == '[CLS] [CLS]':
+                pass
+            else:
+                f3_line = list_f3[i].strip()
+                newline = f2_line + ' ' + f3_line+'\n'
+                f1.write(newline)
 
 
 if __name__ == "__main__":
